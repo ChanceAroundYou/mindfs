@@ -177,30 +177,71 @@ assert.match(badges, /if \(badges\.length === 0\)/, "an empty badge strip render
 assert.equal(badges.includes('marginTop: "2px"'), false, "the badge strip no longer sits under the name");
 assert.equal(badges.includes("from \"../../app/"), false, "view layer must not import app/");
 assert.equal(badges.includes("services/"), false, "view layer must not import services/");
-// 徽标最坏情况顶端在本行上方 4px，选中底色拓位顶端在上方 7px；2px 行距时
-// 前一行仍留有 8px 盒内下内边距 + 2px 外内边距，所以不会压到前一行正文。
-// 单项目、外部列表和跨项目分组**内部**的会话行都是 2px；跨项目的项目分组
-// **之间**仍为 9px，不能被“回退会话行间距”误改。
+// 徽标排最多探出行盒上沿 4px，选中底色的拓位顶端也在行盒上沿上方 4px；行距必须容得下
+// 这段拓位，否则拓位压进上一行的盒子（2026-11-28「会话列表相互覆盖」）。行距不是审美值，
+// 绑的是同一个常量（见下方常量不变量），单改数字会把这条约束重新踩坏。
+// 单项目、外部列表和跨项目分组**内部**的会话行都走这个行距；跨项目的项目分组
+// **之间**仍为 9px，不能被「回退会话行间距」误改。
+// 外部列表自己画行、不渲染 SessionCard，没有拓位可言，保持 2px。
 const singleList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionList.tsx"), "utf8");
-assert.match(singleList, /flexDirection: "column", gap: "2px"/, "单项目会话行间距保持 2px");
+assert.match(singleList, /flexDirection: "column", gap: SESSION_ROW_GAP_PX/, "单项目会话行间距绑定拓位落点");
 const externalList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/ExternalSessionList.tsx"), "utf8");
-assert.match(externalList, /flexDirection: "column", gap: "2px"/, "外部会话行间距保持 2px");
+assert.match(externalList, /flexDirection: "column", gap: "2px"/, "外部会话行间距保持 2px（不渲染 SessionCard）");
 const multiList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/MultiProjectSessionList.tsx"), "utf8");
 assert.match(multiList, /flexDirection: "column", gap: "9px"/, "跨项目的项目分组间距保持 9px");
-assert.match(multiList, /flexDirection: "column", gap: "2px", paddingTop: TOP_BADGE_LIFT_PX/, "跨项目分组内部会话行间距保持 2px");
+assert.match(
+  multiList,
+  /flexDirection: "column", gap: SESSION_ROW_GAP_PX, paddingTop: TOP_BADGE_LIFT_PX/,
+  "跨项目分组内部会话行间距也绑定拓位落点",
+);
 // 列表顶端留白 ≥ 拓位高度（用户 2026-10-16「间距固定存在」）：第一行选中时底色要向上
 // 拓 TOP_BADGE_LIFT_PX 包住徽标，滚动容器按 padding box 裁剪，少 1px 就会被削平。
 // 绑同一个常量而不是写死数字：改拓位高度时这几处必须跟着走。
 // ExternalSessionList 不在其列 —— 它自己画行、不渲染 SessionCard，没有拓位可言。
 assert.match(
   multiList,
-  /gap: "2px", paddingTop: TOP_BADGE_LIFT_PX/,
+  /gap: SESSION_ROW_GAP_PX, paddingTop: TOP_BADGE_LIFT_PX/,
   "项目名与第一个会话之间必须有固定的借位留白，且随拓位高度同步",
 );
 assert.match(
   singleList,
   /padding: `\$\{TOP_BADGE_LIFT_PX\}px 8px 8px`/,
   "SessionList 顶端留白必须容得下向上拓展的底色",
+);
+
+// ── 6.5 拓位与行距的数值不变量（2026-11-28「会话列表相互覆盖」回归）──
+// 三个常量彼此牵连，改任何一个都要同时满足两条几何约束，所以这里把它们求值后验算，
+// 而不是各自钉死数字（钉死数字只会让「改常量」变成「改两处测试」）。
+//   行盒顶 → 名字顶 = 行 padding 2 + 底盒边框 1 + 内边距 7，徽标排高 14px，
+//   所以徽标探出行盒上沿 overhang px（名字顶上方 10px 里容纳 14px 高的排）。
+//   拓位顶端 = 行盒顶 + 2 - lift。
+//   1) lift - 2 ≥ overhang：拓位顶必须高过整排徽标（2026-10-16 用户要求「包住」）；
+//   2) gap ≥ lift - 1：拓位顶必须比上一行盒底再低 1px（亚像素留量），即
+//      (行盒顶 - gap) - (行盒顶 + 2 - lift) ≤ -1。
+// 旧的 lift 9 + gap 2 违反第 2 条，越界 5px；上一行若是任务分组头（悬停底色铺满整行），
+// 两层半透明底叠成一道亮带，就是用户截图里的「相互覆盖」。
+const geometry = {};
+for (const name of ["TOP_BADGE_OVERHANG_PX", "TOP_BADGE_LIFT_PX", "SESSION_ROW_GAP_PX"]) {
+  const m = top.match(new RegExp(`export const ${name} = ([^;\\n]+);`));
+  assert.ok(m, `${name} 必须由 SessionCardTopBadges 导出`);
+  const expr = m[1].replace(/\b[A-Z][A-Z0-9_]*\b/g, (id) => {
+    assert.ok(id in geometry, `${name} 引用了尚未定义的 ${id}`);
+    return String(geometry[id]);
+  });
+  geometry[name] = vm.runInNewContext(expr);
+}
+const { TOP_BADGE_OVERHANG_PX, TOP_BADGE_LIFT_PX, SESSION_ROW_GAP_PX } = geometry;
+assert.ok(
+  Number.isInteger(TOP_BADGE_OVERHANG_PX) && TOP_BADGE_OVERHANG_PX > 0,
+  `徽标探出高度必须是正整数，实际 ${TOP_BADGE_OVERHANG_PX}`,
+);
+assert.ok(
+  TOP_BADGE_LIFT_PX - 2 >= TOP_BADGE_OVERHANG_PX,
+  `拓位 ${TOP_BADGE_LIFT_PX}px 包不住探出的 ${TOP_BADGE_OVERHANG_PX}px 徽标`,
+);
+assert.ok(
+  SESSION_ROW_GAP_PX >= TOP_BADGE_LIFT_PX - 1,
+  `行距 ${SESSION_ROW_GAP_PX}px 容不下 ${TOP_BADGE_LIFT_PX}px 的拓位：会叠进上一行 ${TOP_BADGE_LIFT_PX - 2 - SESSION_ROW_GAP_PX}px`,
 );
 
 const sharedList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/sessionListShared.tsx"), "utf8");

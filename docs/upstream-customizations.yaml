@@ -680,7 +680,7 @@ groups:
   - id: G-AD
     title: 会话列表 / 树 / 归档 / 搜索
     kind: feature
-    symptom: "会话列表切换项目后闪一下再出现；归档会话找不到入口；搜索跳不到命中片段；会话在等你回答时，名字上方的问号徽标不亮；答完问题徽标不立刻灭，要等这一轮会话结束才更新（跨节点还要等 5s 轮询）。"
+    symptom: "会话列表切换项目后闪一下再出现；归档会话找不到入口；搜索跳不到命中片段；会话在等你回答时，名字上方的问号徽标不亮；答完问题徽标不立刻灭，要等这一轮会话结束才更新（跨节点还要等 5s 轮询）；选中带徽标的会话时，它的底色向上拓进上一行，与任务分组头的悬停底色叠成一道横带（2026-11-28 用户报的「会话列表相互覆盖」）。"
     why: "sessionListMerge/sessionTree/sessionGroupDisplay 把多节点多项目的会话合并、建树、分组显示收敛成纯函数，便于测试；归档面板挂在列表侧栏。上游没有这些，退回上游实现会让列表在切项目/切节点时塌掉。问号徽标要实时，必须两条通道都在：aux 写入后广播 session.meta.updated（同节点毫秒级），答题那一刻直接清会话行的 ask_user_waiting（原来只等 tool_call_update complete 才清，徽标会亮到这一轮结束）；跨节点再靠 5s 轮询的 awaiting_answer 覆盖（轮询里出现过的会话记显式 false，缺席=不知情，不能拿来清徽标）。"
     files:
       - web/src/components/session/ArchivedSessionsPanel.tsx
@@ -761,8 +761,14 @@ groups:
       - 'web/src/components/session/sessionListShared.tsx:marginBottom = "0"'
       - 'web/src/components/session/SessionList.tsx:marginBottom="2px"'
       - 'web/src/components/session/MultiProjectSessionList.tsx:marginBottom="2px"'
-      # 会话行保持 2px；顶部留白仍绑拓位高度，第一行不被滚动容器裁掉。
-      - 'web/src/components/session/SessionList.tsx:flexDirection: "column", gap: "2px"'
+      # 行距不是审美值，是选中底色拓位的落点（2026-11-28「会话列表相互覆盖」）：
+      # 拓位顶端 = 行盒顶 - (lift - 行 padding 2)。lift 9 + 行距 2 时它越界 5px，压进
+      # 上一行的盒子；上一行若是任务分组头（悬停底色铺满整行），两层半透明底叠成一道
+      # 亮带，看着就是两张卡相互覆盖。现在 overhang 4 / lift 6 / gap 5 由测试联立验算：
+      # lift - 2 ≥ overhang（包住徽标，2026-10-16）且 gap ≥ lift - 1（不越界）。
+      - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_OVERHANG_PX'
+      - 'web/src/components/session/SessionCardTopBadges.tsx:export const SESSION_ROW_GAP_PX'
+      - 'web/src/components/session/SessionList.tsx:flexDirection: "column", gap: SESSION_ROW_GAP_PX'
       - 'web/src/components/session/MultiProjectSessionList.tsx:paddingTop: TOP_BADGE_LIFT_PX'
     tests:
       - web/tests/session-list-merge.test.mjs
@@ -771,6 +777,8 @@ groups:
       - web/tests/session-archive.test.mjs
       - web/tests/archived-panel.test.mjs
       - web/tests/session-duration.test.mjs
+      # 徽标排/拓位/行距三个常量联立验算：lift - 2 ≥ overhang 且 gap ≥ lift - 1；
+      # 改任何一个都得同时满足两条，单独钉数字只会把「改常量」变成「改两处测试」。
       - web/tests/session-status-badges.test.mjs
       - server/internal/session/manager_session_aux_flags_test.go
       - server/internal/api/http_session_aux_flags_test.go

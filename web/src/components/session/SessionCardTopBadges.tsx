@@ -16,9 +16,9 @@ import type { SessionItem } from "./sessionListTypes";
  *
  * 排空时整块不渲染（return null）：没徽标却留一个空盒子，等于白占一行。
  *
- * 高度上限：这排最多 14px（worktree 标签与 aux 徽标同高），而上下两行之间
- * 有 20px 留白（盒内 padding 7 + 行 padding 2 + 列表 gap 2 + 行 padding 2 + 盒内 padding 7），
- * 所以它只吃掉上一个会话留白里的一小截，不会压到上一行的文字。
+ * 高度上限：这排最多 14px（worktree 标签与 aux 徽标同高）。名字顶在行盒顶下方
+ * 10px（行 padding 2 + 边框 1 + 盒内边距 7），所以徽标排里探出行盒上沿的是 4px
+ * —— 见 TOP_BADGE_OVERHANG_PX。
  */
 export function SessionCardTopBadges({
   session,
@@ -115,8 +115,32 @@ export function hasSessionTopBadges(session: SessionItem, isSubagent: boolean, u
 }
 
 /**
- * 选中底色向上拓展的高度。徽标排最多探出盒子上沿 6px（名字顶 = 盒顶 + 边框 1 + 内边距 7，
- * 徽标高 14），取 9px 留 1px 富余，正好把它整排包进底色里。
- * 拓展靠绝对定位实现 —— **不占流**，行高与相邻行的位置一个像素都不变。
+ * 徽标排探出**行盒**上沿的高度。
+ *
+ * 行盒顶 → 名字顶是 10px（行 padding 2 + 底盒边框 1 + 底盒内边距 7），徽标排高 14px
+ * （worktree 标签与 aux 徽标同高），所以露在行盒外面的只有 4px。
  */
-export const TOP_BADGE_LIFT_PX = 9;
+export const TOP_BADGE_OVERHANG_PX = 4;
+
+/**
+ * 选中底色向上拓展的高度 = 行外那 2px 留白 + 徽标探出的 4px。
+ *
+ * 这个数两边都卡着，多一个像素都不行（2026-11-28 用户报的「会话列表相互覆盖」就是
+ * 这里越界）：
+ * - 小于 6：底色包不住整排徽标（2026-10-16 用户要求包住）；
+ * - 大于「行距 + 2」：底色顶越过行距，压进上一行的盒子里。上一行若是任务分组头，
+ *   它的悬停底色铺满整行，两层半透明底一叠就是一道更亮的横带 —— 看着就是两张卡
+ *   相互覆盖。此前 lift 9 + 行距 2 正好越界 5px，手机上截图一眼可见。
+ * 行距必须跟着给到 SESSION_ROW_GAP_PX，单改一个数会把这条约束重新踩坏。
+ *
+ * 拓展靠负外边距 + 等量上内边距实现 —— 占的是行外的留白，行高与相邻行的位置
+ * 一个像素都不变。
+ */
+export const TOP_BADGE_LIFT_PX = TOP_BADGE_OVERHANG_PX + 2;
+
+/**
+ * 列表里会话行之间的 gap。**这不是审美值，是拓位的落点**：
+ * 拓位顶 = 行盒顶 - (lift - 行 padding 2) = 行盒顶 - 4px，正好落在徽标排顶端；
+ * 行距 5px 时它离上一行盒底还有 1px（亚像素留量，免得两层底色共用一个边界像素）。
+ */
+export const SESSION_ROW_GAP_PX = TOP_BADGE_OVERHANG_PX + 1;

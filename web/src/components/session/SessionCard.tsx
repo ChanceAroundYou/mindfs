@@ -122,6 +122,9 @@ function SessionCard({
           // 外边距盒总高不变 —— 行高、行距、后面的会话都不动。
           // 横向也就只到这里（不含时间列与 ⋯ 菜单），和没徽标的选中行同宽；
           // 另起一块绝对定位的底会铺满整行，那才是「借位版选中框面积过大」。
+          // 代价是提起的这段底会伸进上一行：行距必须 ≥ 提多少（见 SESSION_ROW_GAP_PX，
+          // 由上面那排徽标的高度反推出来），否则两层半透明底叠在一起就是 2026-11-28 那次
+          // 「会话列表相互覆盖」。
           marginTop: liftTop ? `-${liftTop}px` : 0,
           padding: editing ? "7px 0 7px 2px" : `${7 + liftTop}px 4px 7px 2px`,
           borderRadius: "8px",
